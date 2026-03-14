@@ -13,10 +13,14 @@ from ..services.zep_entity_reader import ZepEntityReader
 from ..services.oasis_profile_generator import OasisProfileGenerator
 from ..services.simulation_manager import SimulationManager, SimulationStatus
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
+from ..services.simulation_engines import SimulationEngineRegistry
 from ..utils.logger import get_logger
 from ..models.project import ProjectManager
 
 logger = get_logger('mirofish.api.simulation')
+
+ENGINE_REGISTRY = SimulationEngineRegistry()
+ENGINE_SIMULATIONS = {}
 
 
 # Interview prompt 优化前缀
@@ -40,6 +44,93 @@ def optimize_interview_prompt(prompt: str) -> str:
     if prompt.startswith(INTERVIEW_PROMPT_PREFIX):
         return prompt
     return f"{INTERVIEW_PROMPT_PREFIX}{prompt}"
+
+
+# ============== 多引擎模拟接口（新增） ==============
+
+@simulation_bp.route('/engines', methods=['GET'])
+def list_simulation_engines():
+    """列出可用模拟引擎"""
+    return jsonify({
+        "success": True,
+        "data": {
+            "engines": ENGINE_REGISTRY.list_engines()
+        }
+    })
+
+
+@simulation_bp.route('/engines/create', methods=['POST'])
+def create_engine_simulation():
+    """创建多引擎模拟（默认OASIS，支持mesa_renewable_fuels）"""
+    import uuid
+    data = request.get_json() or {}
+
+    engine = data.get('engine', 'oasis')
+    if engine not in ENGINE_REGISTRY.list_engines():
+        return jsonify({"success": False, "error": f"不支持的引擎: {engine}"}), 400
+
+    simulation_id = f"sim_{engine}_{uuid.uuid4().hex[:10]}"
+    ENGINE_SIMULATIONS[simulation_id] = {
+        "simulation_id": simulation_id,
+        "engine": engine,
+        "project_id": data.get('project_id'),
+        "created_at": data.get('created_at')
+    }
+
+    return jsonify({
+        "success": True,
+        "data": ENGINE_SIMULATIONS[simulation_id]
+    })
+
+
+def _resolve_engine(simulation_id: str):
+    simulation_meta = ENGINE_SIMULATIONS.get(simulation_id)
+    if not simulation_meta:
+        raise ValueError(f"模拟不存在: {simulation_id}")
+    return ENGINE_REGISTRY.get(simulation_meta['engine']), simulation_meta
+
+
+@simulation_bp.route('/engines/<simulation_id>/prepare', methods=['POST'])
+def prepare_engine_simulation(simulation_id: str):
+    """统一 prepare 接口，renewables场景仅在该阶段使用LLM提取假设"""
+    try:
+        engine, simulation_meta = _resolve_engine(simulation_id)
+        result = engine.prepare(simulation_id, request.get_json() or {})
+        simulation_meta['status'] = result.get('status')
+        return jsonify({"success": True, "data": result})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@simulation_bp.route('/engines/<simulation_id>/run', methods=['POST'])
+def run_engine_simulation(simulation_id: str):
+    """统一 run 接口"""
+    try:
+        engine, _ = _resolve_engine(simulation_id)
+        result = engine.run(simulation_id, request.get_json() or {})
+        return jsonify({"success": True, "data": result})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@simulation_bp.route('/engines/<simulation_id>/status', methods=['GET'])
+def get_engine_simulation_status(simulation_id: str):
+    """统一 status 接口"""
+    try:
+        engine, _ = _resolve_engine(simulation_id)
+        return jsonify({"success": True, "data": engine.get_status(simulation_id)})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 404
+
+
+@simulation_bp.route('/engines/<simulation_id>/results', methods=['GET'])
+def get_engine_simulation_results(simulation_id: str):
+    """统一 results 接口（JSON输出，用于自定义图表）"""
+    try:
+        engine, _ = _resolve_engine(simulation_id)
+        return jsonify({"success": True, "data": engine.get_results(simulation_id)})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
 
 
 # ============== 实体读取接口 ==============

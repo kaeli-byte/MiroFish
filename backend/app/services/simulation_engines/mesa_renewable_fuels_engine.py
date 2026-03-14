@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import logging
 import threading
 from typing import Any, Dict, List
 
@@ -12,6 +13,9 @@ from mesa.time import StagedActivation
 
 from .assumption_extractor import ScenarioAssumptionExtractor
 from .interface import SimulationEngine
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProducerAgent(Agent):
@@ -135,6 +139,7 @@ class RenewableSimulationState:
     scenario: Dict[str, Any] = field(default_factory=dict)
     assumptions: Dict[str, Any] = field(default_factory=dict)
     metrics: List[Dict[str, Any]] = field(default_factory=list)
+    error: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -150,13 +155,44 @@ class MesaRenewableFuelsEngine(SimulationEngine):
                 self._states[simulation_id] = RenewableSimulationState(simulation_id=simulation_id)
             return self._states[simulation_id]
 
+    def _sanitize_scenario(self, scenario: Dict[str, Any]) -> Dict[str, Any]:
+        sanitized: Dict[str, Any] = dict(scenario)
+
+        int_keys = {"steps", "producers", "suppliers", "buyers", "investors"}
+        float_keys = {"initial_price", "initial_capital", "producer_capacity", "buyer_demand"}
+
+        for key in int_keys:
+            if key in sanitized:
+                sanitized[key] = int(sanitized[key])
+        for key in float_keys:
+            if key in sanitized:
+                sanitized[key] = float(sanitized[key])
+
+        return sanitized
+
     def prepare(self, simulation_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         state = self._get_state(simulation_id)
         assumptions = ScenarioAssumptionExtractor.extract(payload.get("report_text", ""))
+
         with self._lock:
-            state.scenario = payload.get("scenario", {})
+            if state.status == "running":
+                raise ValueError("Cannot prepare simulation while it is running.")
+
+            scenario = payload.get("scenario", {})
+            if not isinstance(scenario, dict):
+                raise ValueError("Scenario must be an object.")
+
+            sanitized_scenario = self._sanitize_scenario(scenario)
+            total_steps = int(sanitized_scenario.get("steps", 24))
+            if total_steps <= 0:
+                raise ValueError("Scenario steps must be greater than 0.")
+
+            state.scenario = sanitized_scenario
             state.assumptions = assumptions
-            state.total_steps = int(state.scenario.get("steps", 24))
+            state.total_steps = total_steps
+            state.current_step = 0
+            state.metrics = []
+            state.error = None
             state.status = "ready"
             state.updated_at = datetime.now().isoformat()
         return self.get_status(simulation_id)
@@ -164,8 +200,12 @@ class MesaRenewableFuelsEngine(SimulationEngine):
     def _run_background(self, simulation_id: str):
         state = self._get_state(simulation_id)
         try:
-            model = RenewableFuelsMarketModel(state.scenario)
-            for step in range(1, state.total_steps + 1):
+            with self._lock:
+                scenario = dict(state.scenario)
+                total_steps = state.total_steps
+
+            model = RenewableFuelsMarketModel(scenario)
+            for step in range(1, total_steps + 1):
                 model.step()
                 with self._lock:
                     state.current_step = step
@@ -186,9 +226,11 @@ class MesaRenewableFuelsEngine(SimulationEngine):
             with self._lock:
                 state.status = "completed"
                 state.updated_at = datetime.now().isoformat()
-        except Exception:
+        except Exception as exc:
+            logger.exception("Renewable fuels simulation failed for simulation_id=%s", simulation_id)
             with self._lock:
                 state.status = "failed"
+                state.error = str(exc)
                 state.updated_at = datetime.now().isoformat()
 
     def run(self, simulation_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -199,6 +241,7 @@ class MesaRenewableFuelsEngine(SimulationEngine):
             state.status = "running"
             state.current_step = 0
             state.metrics = []
+            state.error = None
             state.updated_at = datetime.now().isoformat()
 
         threading.Thread(target=self._run_background, args=(simulation_id,), daemon=True).start()
@@ -213,6 +256,7 @@ class MesaRenewableFuelsEngine(SimulationEngine):
                 "status": state.status,
                 "current_step": state.current_step,
                 "total_steps": state.total_steps,
+                "error": state.error,
                 "updated_at": state.updated_at,
             }
 

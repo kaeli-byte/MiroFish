@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, List
 
 from .interface import SimulationEngine
 from .mesa_renewable_fuels_engine import MesaRenewableFuelsEngine
@@ -21,5 +21,5 @@ class SimulationEngineRegistry:
             raise ValueError(f"Unsupported simulation engine: {engine_name}")
         return self._engines[engine_name]
 
-    def list_engines(self):
+    def list_engines(self) -> List[str]:
         return list(self._engines.keys())

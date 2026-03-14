@@ -185,3 +185,30 @@ export const getSimulationHistory = (limit = 20) => {
   return service.get('/api/simulation/history', { params: { limit } })
 }
 
+/**
+ * ============== 多引擎（renewables）API ==============
+ */
+
+export const listSimulationEngines = () => {
+  return service.get('/api/simulation/engines')
+}
+
+export const createEngineSimulation = (data) => {
+  return service.post('/api/simulation/engines/create', data)
+}
+
+export const prepareEngineSimulation = (simulationId, data) => {
+  return service.post(`/api/simulation/engines/${simulationId}/prepare`, data)
+}
+
+export const runEngineSimulation = (simulationId, data = {}) => {
+  return service.post(`/api/simulation/engines/${simulationId}/run`, data)
+}
+
+export const getEngineSimulationStatus = (simulationId) => {
+  return service.get(`/api/simulation/engines/${simulationId}/status`)
+}
+
+export const getEngineSimulationResults = (simulationId) => {
+  return service.get(`/api/simulation/engines/${simulationId}/results`)
+}

@@ -29,17 +29,28 @@ const router = useRouter()
 const statusJson = ref('')
 const loading = ref(false)
 const error = ref('')
+const requestGen = ref(0)
 
 const loadStatus = async () => {
+  requestGen.value += 1
+  const currentRequestGen = requestGen.value
   loading.value = true
   try {
     const res = await getEngineSimulationStatus(props.simulationId)
+    if (currentRequestGen !== requestGen.value) {
+      return
+    }
     statusJson.value = JSON.stringify(res.data, null, 2)
     error.value = ''
   } catch (err) {
+    if (currentRequestGen !== requestGen.value) {
+      return
+    }
     error.value = err?.message || 'Failed to load simulation status.'
   } finally {
-    loading.value = false
+    if (currentRequestGen === requestGen.value) {
+      loading.value = false
+    }
   }
 }
 

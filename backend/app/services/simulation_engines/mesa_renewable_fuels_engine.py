@@ -161,12 +161,25 @@ class MesaRenewableFuelsEngine(SimulationEngine):
         int_keys = {"steps", "producers", "suppliers", "buyers", "investors"}
         float_keys = {"initial_price", "initial_capital", "producer_capacity", "buyer_demand"}
 
+        def safe_cast(key: str, cast_type: type[int] | type[float]) -> None:
+            if key not in sanitized:
+                return
+
+            raw_value = sanitized[key]
+            try:
+                sanitized[key] = cast_type(raw_value)
+            except (TypeError, ValueError) as exc:
+                cast_type_name = "int" if cast_type is int else "float"
+                raise ValueError(
+                    f"_sanitize_scenario failed for key '{key}' with value {raw_value!r}: "
+                    f"expected a value castable by {cast_type_name} from "
+                    f"{'int_keys' if cast_type is int else 'float_keys'}."
+                ) from exc
+
         for key in int_keys:
-            if key in sanitized:
-                sanitized[key] = int(sanitized[key])
+            safe_cast(key, int)
         for key in float_keys:
-            if key in sanitized:
-                sanitized[key] = float(sanitized[key])
+            safe_cast(key, float)
 
         return sanitized
 

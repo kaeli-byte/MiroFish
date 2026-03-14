@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging
+import math
 import threading
 from typing import Any, Dict, List
 
@@ -167,6 +168,22 @@ class MesaRenewableFuelsEngine(SimulationEngine):
 
             raw_value = sanitized[key]
             try:
+                if cast_type is float:
+                    if isinstance(raw_value, bool):
+                        raise ValueError(f"_sanitize_scenario safe_cast rejected bool for float key '{key}'.")
+                    if not math.isfinite(float(raw_value)):
+                        raise ValueError(
+                            f"_sanitize_scenario safe_cast rejected non-finite value for float key '{key}'."
+                        )
+
+                if cast_type is int:
+                    if isinstance(raw_value, bool):
+                        raise ValueError(f"_sanitize_scenario safe_cast rejected bool for int key '{key}'.")
+                    if isinstance(raw_value, float) and (math.isnan(raw_value) or math.isinf(raw_value)):
+                        raise ValueError(
+                            f"_sanitize_scenario safe_cast rejected non-finite float for int key '{key}'."
+                        )
+
                 sanitized[key] = cast_type(raw_value)
             except (TypeError, ValueError) as exc:
                 cast_type_name = "int" if cast_type is int else "float"

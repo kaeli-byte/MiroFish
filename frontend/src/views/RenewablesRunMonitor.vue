@@ -14,7 +14,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getEngineSimulationStatus, runEngineSimulation } from '../api/simulation'
 
@@ -30,14 +30,14 @@ const statusJson = ref('')
 const loading = ref(false)
 const error = ref('')
 
-const refresh = async () => {
+const loadStatus = async () => {
   loading.value = true
   try {
     const res = await getEngineSimulationStatus(props.simulationId)
     statusJson.value = JSON.stringify(res.data, null, 2)
     error.value = ''
   } catch (err) {
-    error.value = err?.message || 'Failed to refresh simulation status.'
+    error.value = err?.message || 'Failed to load simulation status.'
   } finally {
     loading.value = false
   }
@@ -56,9 +56,12 @@ const run = async () => {
   }
 }
 
+const refresh = () => loadStatus()
+
 const goDashboard = () => router.push(`/renewables/${props.simulationId}/dashboard`)
 
-onMounted(refresh)
+onMounted(loadStatus)
+watch(() => props.simulationId, loadStatus)
 </script>
 
 <style scoped>

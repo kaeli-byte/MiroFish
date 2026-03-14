@@ -55,15 +55,25 @@ const loadStatus = async () => {
 }
 
 const run = async () => {
+  requestGen.value += 1
+  const currentRequestGen = requestGen.value
   loading.value = true
   try {
     const res = await runEngineSimulation(props.simulationId)
+    if (currentRequestGen !== requestGen.value) {
+      return
+    }
     statusJson.value = JSON.stringify(res.data, null, 2)
     error.value = ''
   } catch (err) {
+    if (currentRequestGen !== requestGen.value) {
+      return
+    }
     error.value = err?.message || 'Failed to run simulation.'
   } finally {
-    loading.value = false
+    if (currentRequestGen === requestGen.value) {
+      loading.value = false
+    }
   }
 }
 

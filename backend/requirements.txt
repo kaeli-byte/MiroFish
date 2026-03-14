@@ -21,6 +21,7 @@ zep-cloud==3.13.0
 camel-oasis==0.2.5
 camel-ai==0.2.78
 
+# Mesa agent-based simulation for MesaRenewableFuelsEngine
 mesa>=2.2.0
 
 # ============= 文件处理 =============

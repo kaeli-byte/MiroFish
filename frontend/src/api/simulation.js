@@ -189,26 +189,59 @@ export const getSimulationHistory = (limit = 20) => {
  * ============== 多引擎（renewables）API ==============
  */
 
+/**
+ * List all available simulation engines.
+ * @returns {Promise<Object>} Promise resolving to available engine list response.
+ */
 export const listSimulationEngines = () => {
   return service.get('/api/simulation/engines')
 }
 
+/**
+ * Create an engine simulation instance.
+ * @param {Object} data - Create payload.
+ * @param {string} data.engine - Engine name (for example: mesa_renewable_fuels).
+ * @param {string|number} data.project_id - Project identifier.
+ * @returns {Promise<Object>} Promise resolving to created simulation metadata.
+ */
 export const createEngineSimulation = (data) => {
-  return service.post('/api/simulation/engines/create', data)
+  return requestWithRetry(() => service.post('/api/simulation/engines/create', data), 3, 1000)
 }
 
+/**
+ * Prepare an engine simulation with scenario/report inputs.
+ * @param {string|number} simulationId - Simulation identifier.
+ * @param {Object} data - Prepare payload.
+ * @returns {Promise<Object>} Promise resolving to simulation status after prepare.
+ */
 export const prepareEngineSimulation = (simulationId, data) => {
-  return service.post(`/api/simulation/engines/${simulationId}/prepare`, data)
+  return requestWithRetry(() => service.post(`/api/simulation/engines/${simulationId}/prepare`, data), 3, 1000)
 }
 
+/**
+ * Run an engine simulation.
+ * @param {string|number} simulationId - Simulation identifier.
+ * @param {Object} [data={}] - Optional run payload.
+ * @returns {Promise<Object>} Promise resolving to current simulation run status.
+ */
 export const runEngineSimulation = (simulationId, data = {}) => {
-  return service.post(`/api/simulation/engines/${simulationId}/run`, data)
+  return requestWithRetry(() => service.post(`/api/simulation/engines/${simulationId}/run`, data), 3, 1000)
 }
 
+/**
+ * Get current simulation status.
+ * @param {string|number} simulationId - Simulation identifier.
+ * @returns {Promise<Object>} Promise resolving to simulation status payload.
+ */
 export const getEngineSimulationStatus = (simulationId) => {
   return service.get(`/api/simulation/engines/${simulationId}/status`)
 }
 
+/**
+ * Get simulation results.
+ * @param {string|number} simulationId - Simulation identifier.
+ * @returns {Promise<Object>} Promise resolving to simulation results payload.
+ */
 export const getEngineSimulationResults = (simulationId) => {
   return service.get(`/api/simulation/engines/${simulationId}/results`)
 }

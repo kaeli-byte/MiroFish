@@ -18,19 +18,30 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { getEngineSimulationResults } from '../api/simulation'
 
 const route = useRoute()
-const simulationId = route.params.simulationId
+const simulationId = computed(() => route.params.simulationId)
 const results = ref({})
 const resultsJson = ref('')
 
 const load = async () => {
-  const res = await getEngineSimulationResults(simulationId)
-  results.value = res.data.data || {}
-  resultsJson.value = JSON.stringify(results.value, null, 2)
+  try {
+    const res = await getEngineSimulationResults(simulationId.value)
+    if (res?.data?.data) {
+      results.value = res.data.data
+      resultsJson.value = JSON.stringify(results.value, null, 2)
+      return
+    }
+
+    results.value = {}
+    resultsJson.value = 'Unable to load simulation results.'
+  } catch (error) {
+    results.value = {}
+    resultsJson.value = `Failed to load results: ${error?.message || 'Unknown error'}`
+  }
 }
 </script>
 

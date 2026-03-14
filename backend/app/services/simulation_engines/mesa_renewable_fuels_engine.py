@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import threading
 from typing import Any, Dict, List
 
 from mesa import Agent, Model
@@ -141,79 +142,98 @@ class RenewableSimulationState:
 class MesaRenewableFuelsEngine(SimulationEngine):
     def __init__(self):
         self._states: Dict[str, RenewableSimulationState] = {}
+        self._lock = threading.Lock()
 
     def _get_state(self, simulation_id: str) -> RenewableSimulationState:
-        if simulation_id not in self._states:
-            self._states[simulation_id] = RenewableSimulationState(simulation_id=simulation_id)
-        return self._states[simulation_id]
+        with self._lock:
+            if simulation_id not in self._states:
+                self._states[simulation_id] = RenewableSimulationState(simulation_id=simulation_id)
+            return self._states[simulation_id]
 
     def prepare(self, simulation_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         state = self._get_state(simulation_id)
-        state.scenario = payload.get("scenario", {})
-        state.assumptions = ScenarioAssumptionExtractor.extract(payload.get("report_text", ""))
-        state.total_steps = int(state.scenario.get("steps", 24))
-        state.status = "ready"
-        state.updated_at = datetime.now().isoformat()
+        assumptions = ScenarioAssumptionExtractor.extract(payload.get("report_text", ""))
+        with self._lock:
+            state.scenario = payload.get("scenario", {})
+            state.assumptions = assumptions
+            state.total_steps = int(state.scenario.get("steps", 24))
+            state.status = "ready"
+            state.updated_at = datetime.now().isoformat()
         return self.get_status(simulation_id)
+
+    def _run_background(self, simulation_id: str):
+        state = self._get_state(simulation_id)
+        try:
+            model = RenewableFuelsMarketModel(state.scenario)
+            for step in range(1, state.total_steps + 1):
+                model.step()
+                with self._lock:
+                    state.current_step = step
+                    state.metrics.append(
+                        {
+                            "step": step,
+                            "supply": round(model.supply, 3),
+                            "inventory": round(model.available_inventory, 3),
+                            "demand": round(model.total_demand, 3),
+                            "price": round(model.price, 3),
+                            "investment_flow": round(model.investment_flow, 3),
+                            "capital_pool": round(model.capital_pool, 3),
+                            "regulation_intensity": round(model.regulation_intensity, 3),
+                        }
+                    )
+                    state.updated_at = datetime.now().isoformat()
+
+            with self._lock:
+                state.status = "completed"
+                state.updated_at = datetime.now().isoformat()
+        except Exception:
+            with self._lock:
+                state.status = "failed"
+                state.updated_at = datetime.now().isoformat()
 
     def run(self, simulation_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         state = self._get_state(simulation_id)
-        if state.status not in {"ready", "completed"}:
-            raise ValueError("Simulation must be prepared before running.")
+        with self._lock:
+            if state.status not in {"ready", "completed"}:
+                raise ValueError("Simulation must be prepared before running.")
+            state.status = "running"
+            state.current_step = 0
+            state.metrics = []
+            state.updated_at = datetime.now().isoformat()
 
-        model = RenewableFuelsMarketModel(state.scenario)
-        state.status = "running"
-        state.current_step = 0
-        state.metrics = []
-
-        for step in range(1, state.total_steps + 1):
-            model.step()
-            state.current_step = step
-            state.metrics.append(
-                {
-                    "step": step,
-                    "supply": round(model.supply, 3),
-                    "inventory": round(model.available_inventory, 3),
-                    "demand": round(model.total_demand, 3),
-                    "price": round(model.price, 3),
-                    "investment_flow": round(model.investment_flow, 3),
-                    "capital_pool": round(model.capital_pool, 3),
-                    "regulation_intensity": round(model.regulation_intensity, 3),
-                }
-            )
-
-        state.status = "completed"
-        state.updated_at = datetime.now().isoformat()
+        threading.Thread(target=self._run_background, args=(simulation_id,), daemon=True).start()
         return self.get_status(simulation_id)
 
     def get_status(self, simulation_id: str) -> Dict[str, Any]:
         state = self._get_state(simulation_id)
-        return {
-            "simulation_id": simulation_id,
-            "engine": "mesa_renewable_fuels",
-            "status": state.status,
-            "current_step": state.current_step,
-            "total_steps": state.total_steps,
-            "updated_at": state.updated_at,
-        }
+        with self._lock:
+            return {
+                "simulation_id": simulation_id,
+                "engine": "mesa_renewable_fuels",
+                "status": state.status,
+                "current_step": state.current_step,
+                "total_steps": state.total_steps,
+                "updated_at": state.updated_at,
+            }
 
     def get_results(self, simulation_id: str) -> Dict[str, Any]:
         state = self._get_state(simulation_id)
-        if state.status != "completed":
-            raise ValueError("Simulation results are only available after completion.")
-        latest = state.metrics[-1] if state.metrics else {}
-        return {
-            "simulation_id": simulation_id,
-            "engine": "mesa_renewable_fuels",
-            "scenario": state.scenario,
-            "assumptions": state.assumptions,
-            "status": state.status,
-            "summary": {
-                "final_price": latest.get("price"),
-                "final_supply": latest.get("supply"),
-                "final_inventory": latest.get("inventory"),
-                "final_demand": latest.get("demand"),
-                "final_capital_pool": latest.get("capital_pool"),
-            },
-            "time_series": state.metrics,
-        }
+        with self._lock:
+            if state.status != "completed":
+                raise ValueError("Simulation results are only available after completion.")
+            latest = state.metrics[-1] if state.metrics else {}
+            return {
+                "simulation_id": simulation_id,
+                "engine": "mesa_renewable_fuels",
+                "scenario": state.scenario,
+                "assumptions": state.assumptions,
+                "status": state.status,
+                "summary": {
+                    "final_price": latest.get("price"),
+                    "final_supply": latest.get("supply"),
+                    "final_inventory": latest.get("inventory"),
+                    "final_demand": latest.get("demand"),
+                    "final_capital_pool": latest.get("capital_pool"),
+                },
+                "time_series": list(state.metrics),
+            }

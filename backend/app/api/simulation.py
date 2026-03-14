@@ -5,6 +5,9 @@ Step2: Zep实体读取与过滤、OASIS模拟准备与运行（全程自动化�
 
 import os
 import traceback
+import uuid
+from datetime import datetime, timezone
+from threading import Lock
 from flask import request, jsonify, send_file
 
 from . import simulation_bp
@@ -20,7 +23,12 @@ from ..models.project import ProjectManager
 logger = get_logger('mirofish.api.simulation')
 
 ENGINE_REGISTRY = SimulationEngineRegistry()
+# NOTE: ENGINE_SIMULATIONS is intentionally ephemeral in-memory metadata for lightweight
+# engine orchestration. It is reset on process restart and is not a production persistence
+# mechanism; durable simulation state should go through SimulationEngineRegistry/
+# SimulationManager-backed storage patterns.
 ENGINE_SIMULATIONS = {}
+ENGINE_SIMULATIONS_LOCK = Lock()
 
 
 # Interview prompt 优化前缀
@@ -62,7 +70,6 @@ def list_simulation_engines():
 @simulation_bp.route('/engines/create', methods=['POST'])
 def create_engine_simulation():
     """创建多引擎模拟（默认OASIS，支持mesa_renewable_fuels）"""
-    import uuid
     data = request.get_json() or {}
 
     engine = data.get('engine', 'oasis')
@@ -70,21 +77,24 @@ def create_engine_simulation():
         return jsonify({"success": False, "error": f"不支持的引擎: {engine}"}), 400
 
     simulation_id = f"sim_{engine}_{uuid.uuid4().hex[:10]}"
-    ENGINE_SIMULATIONS[simulation_id] = {
+    simulation_record = {
         "simulation_id": simulation_id,
         "engine": engine,
         "project_id": data.get('project_id'),
-        "created_at": data.get('created_at')
+        "created_at": datetime.now(timezone.utc).isoformat()
     }
+    with ENGINE_SIMULATIONS_LOCK:
+        ENGINE_SIMULATIONS[simulation_id] = simulation_record
 
     return jsonify({
         "success": True,
-        "data": ENGINE_SIMULATIONS[simulation_id]
+        "data": simulation_record
     })
 
 
 def _resolve_engine(simulation_id: str):
-    simulation_meta = ENGINE_SIMULATIONS.get(simulation_id)
+    with ENGINE_SIMULATIONS_LOCK:
+        simulation_meta = ENGINE_SIMULATIONS.get(simulation_id)
     if not simulation_meta:
         raise ValueError(f"模拟不存在: {simulation_id}")
     return ENGINE_REGISTRY.get(simulation_meta['engine']), simulation_meta
@@ -96,7 +106,8 @@ def prepare_engine_simulation(simulation_id: str):
     try:
         engine, simulation_meta = _resolve_engine(simulation_id)
         result = engine.prepare(simulation_id, request.get_json() or {})
-        simulation_meta['status'] = result.get('status')
+        with ENGINE_SIMULATIONS_LOCK:
+            simulation_meta['status'] = result.get('status')
         return jsonify({"success": True, "data": result})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 400
